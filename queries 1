@@ -12,3 +12,79 @@ SELECT
 FROM olist_orders
 WHERE order_purchase_timestamp >= '2017-01-01'
 GROUP BY order_status;
+
+SELECT 
+    ROUND(AVG(TIMESTAMPDIFF(HOUR, order_purchase_timestamp, order_approved_at)), 2) AS avg_approval_hours,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, order_approved_at, order_delivered_carrier_date)), 2) AS avg_seller_handling_days,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, order_delivered_carrier_date, order_delivered_customer_date)), 2) AS avg_carrier_transit_days,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, order_purchase_timestamp, order_delivered_customer_date)), 2) AS avg_total_delivery_days
+FROM olist_orders
+WHERE order_status = 'delivered' 
+  AND order_delivered_carrier_date IS NOT NULL 
+  AND order_delivered_customer_date IS NOT NULL
+  AND order_purchase_timestamp >= '2017-01-01';
+
+SELECT 
+    s.seller_state,
+    c.customer_state,
+    COUNT(DISTINCT o.order_id) AS total_orders,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, o.order_purchase_timestamp, o.order_delivered_customer_date)), 2) AS avg_total_days,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, o.order_delivered_carrier_date, o.order_delivered_customer_date)), 2) AS avg_transit_days,
+    COUNT(DISTINCT CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN o.order_id END) AS total_ate_orders
+FROM olist_orders o
+JOIN olist_orderitems oi ON o.order_id = oi.order_id
+JOIN olist_customers c ON o.customer_id = c.customer_id
+JOIN olist_sellers s ON oi.seller_id = s.seller_id
+WHERE o.order_status = 'delivered'
+  AND o.order_delivered_customer_date IS NOT NULL
+  AND order_purchase_timestamp >= '2017-01-01'
+GROUP BY s.seller_state, c.customer_state
+ORDER BY total_orders DESC
+LIMIT 15;
+
+SELECT 
+    c.customer_city,
+    COUNT(DISTINCT o.order_id) AS total_orders,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, o.order_purchase_timestamp, o.order_delivered_customer_date)), 2) AS avg_total_days,
+    ROUND(AVG(TIMESTAMPDIFF(DAY, o.order_delivered_carrier_date, o.order_delivered_customer_date)), 2) AS avg_transit_days,
+    SUM(CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN 1 ELSE 0 END) AS total_late_orders
+FROM olist_orders o
+JOIN olist_orderitems oi ON o.order_id = oi.order_id
+JOIN olist_customers c ON o.customer_id = c.customer_id
+JOIN olist_sellers s ON oi.seller_id = s.seller_id
+WHERE o.order_status = 'delivered'
+  AND o.order_delivered_customer_date IS NOT NULL
+  AND s.seller_state = 'SP'
+  AND c.customer_state = 'RJ'
+  AND order_purchase_timestamp >= '2017-01-01'
+GROUP BY c.customer_city
+ORDER BY total_orders DESC
+LIMIT 10;
+
+SELECT 
+    s.seller_state,
+    c.customer_state,
+    COUNT(DISTINCT o.order_id) AS total_orders,
+    COUNT(DISTINCT CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN o.order_id END) AS total_late_orders,
+    ROUND(
+        (COUNT(DISTINCT CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN o.order_id END) 
+        / COUNT(DISTINCT o.order_id)) * 100, 2
+    ) AS late_percentage,
+    ROUND(AVG(CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date 
+        THEN DATEDIFF(o.order_delivered_customer_date, o.order_estimated_delivery_date) END), 1) AS avg_late_days,
+    ROUND(AVG(r.avg_review_per_order), 2) AS avg_rating
+FROM olist_orders o
+JOIN olist_customers c ON o.customer_id = c.customer_id
+JOIN olist_orderitems oi ON o.order_id = oi.order_id
+JOIN olist_sellers s ON oi.seller_id = s.seller_id
+LEFT JOIN (
+    SELECT order_id, AVG(review_score) AS avg_review_per_order
+    FROM olist_order_reviews_dataset
+    GROUP BY order_id
+) r ON o.order_id = r.order_id
+WHERE o.order_status = 'delivered'
+  AND o.order_delivered_customer_date IS NOT NULL
+  AND s.seller_state = 'SP'
+  AND c.customer_state IN ('SP', 'RJ')
+  AND order_purchase_timestamp >= '2017-01-01'
+GROUP BY s.seller_state, c.customer_state;
